@@ -156,3 +156,245 @@ Accessing data in rows
 
 ## DataFrame Transformations
 
+![transformation kinds.png](transformation%20kinds.png)
+
+### Creating DataFrames
+
+Previously, we can create DataFrame from raw data sources
+
+    val df = spark.read.format("json").load("/data/flight-data/json/2015-summary.json")
+    // register as temp view
+    df.createOrReplaceTempView("dfTable")
+
+We can also create DataFrames on the fly by taking a set of rows and converting them to a DataFrame
+
+    // in Scala
+    import org.apache.spark.sql.Row
+    import org.apache.spark.sql.types.{StructField, StructType, StringType, LongType}
+
+    val myManualSchema = new StructType(Array(
+      StructField("some", StringType, true),
+      StructField("col", StringType, true),
+      StructField("names", LongType, false)))
+
+    val myRows = Seq(Row("Hello", null, 1L))
+    // create RDD
+    val RDD = spark.sparkContext.parallelize(myRows)
+    val myDF = spark.createDataFrame(myRDD, myManualSchema)
+    myDF.show()
+
+    
+    # in Python
+    from pyspark.sql import Row
+    from pyspark.sql.types import StructField, StructType, StringType, LongType
+    myManualSchema = StructType([
+      StructField("some", StringType(), true),
+      StructField("col", StringType(), true),
+      StructField("names", LongType(), false)
+    ])
+    myRow = Row("Hello", None, 1)
+    myDF = spark.createDataFrame([myRow], myManualSchema)
+    myDF.show()
+
+Create DF by running `toDF` on a `Seq` type. This does not play well with `null` types, so it's not necessarily
+recommended for production use cases
+
+    val myDF = Seq(("Hello, 2, 1L)).toDF("col1", "col2", "col3")
+
+### select and selectExpr
+
+Simplest, using to manipulate columns in DataFrames. The easiest way is just to use the `select` method and past in the
+column names as strings with which you would like to work. You can select multiple columns by using the same style of
+query, just add more column name strings to `select` method
+
+    // both Scala and Python
+    df.select("DEST_COUNTRY_NAME", "ORIGIN_COUNTRY_NAME").show(2)
+
+    -- in SQL
+    SELECT DEST_COUNTRY_NAME FROM dfTable LIMIT 2
+
+You can refer to columns in a number of different ways
+
+    // in Scala
+    import org.apache.spark.sql.functions.{expr, col, column}
+    df.select(
+      df.col("DEST_COUNTRY_NAME"),
+      col("DEST_COUNTRY_NAME"),
+      column("DEST_COUNTRY_NAME"),
+      'DEST_COUNTRY_NAME,
+      $"DEST_COUNTRY_NAME",
+      expr("DEST_COUNTRY_NAME"))
+    .show(2)
+
+    # in Python
+    from pyspark.sql.functions import expr, col, column
+    df.select(
+      expr("DEST_COUNTRY_NAME"),
+      col("DEST_COUNTRY_NAME"),
+      column("DEST_COUNTRY_NAME"))\
+    .show(2)
+
+One common error is attempting to mix Column objects and strings:
+
+    df.select(col("DEST_COUNTRY_NAME"), "DEST_COUNTRY_NAME")  // complier error
+
+> `expr` is the most flexible reference that we can use
+
+    df.select(expr("DEST_COUNTRY_NAME AS destination")).show(2)
+
+    df.select(expr("DEST_COUNTRY_NAME as destination").alias("DEST_COUNTRY_NAME")).show(2)
+
+    // Most convinient
+    df.selectExpr("DEST_COUNTRY_NAME as destination", "DEST_COUNTRY_NAME").show(2)
+
+We can treat selectExpr as a simple way to build up complex expressions that create new DataFrames. In fact, we can add
+any valid non-aggregating SQL statement, and as long as the columns resolve, it will be valid!
+
+    df.selectExpr(
+      "*", // all original columns
+      "(DEST_COUNTRY_NAME = ORIGIN_COUNTRY_NAME) as withinCountry")
+    .show(2)
+
+    -- in SQL
+    SELECT *, (DEST_COUNTRY_NAME = ORIGIN_COUNTRY_NAME) as withinCountry
+    FROM dfTable
+    LIMIT 2
+
+Specify aggregations over the entire DataFrame
+
+    df.selectExpr("avg(count)", "count(distinct(DEST_COUNTRY_NAME))")
+
+    -- in SQL
+    SELECT avg(count), count(distinct(DEST_COUNTRY_NAME)) FROM dfTable
+
+### Converting to Spark Types (Literals)
+
+Sometimes, we need to pass explicit values into Spark that are just a value (rather than a new column). This might be a
+constant value or something we’ll need to compare to later on. The way we do this is through _literals_
+
+    // in Scala
+    import org.apache.spark.sql.functions.lit
+    df.select(expr("*"), lit(1).as(One)).show(2)
+
+    -- in SQL
+    SELECT *, 1 as One FROM dfTable LIMIT 2
+
+    +-----------------+-------------------+-----+---+
+    |DEST_COUNTRY_NAME|ORIGIN_COUNTRY_NAME|count|One|
+    +-----------------+-------------------+-----+---+
+    | United States   |            Romania|   15|  1|
+    | United States   |            Croatia|    1|  1|
+    +-----------------+-------------------+-----+---+
+
+### Adding Columns
+
+Formal way of adding a new column to a DataFrame by using `withColumn` method on our DataFrame
+
+    // in Scala
+    df.withColumn("numberOne", lit(1)).show(2)
+
+    # in Python
+    df.withColumn("numberOne", lit(1)).show(2)
+
+    -- in SQL
+    SELECT *, 1 as numberOne FROM dfTable LIMIT 2
+
+    // same result as above
+
+Make it an actual expression rather than literal
+
+    df.withColumn("withinCountry", expr("ORIGIN_COUNTRY_NAME == DEST_COUNTRY_NAME")).show(2)
+
+> `withColumn` function takes two arguments: the column name and the expression that will create the value for that
+> given row in the DataFrame
+
+### Renaming Columns
+
+    // in Scala
+    df.withColumnRenamed("DEST_COUNTRY_NAME", "dest").columns
+
+    # in Python
+    df.withColumnRenamed("DEST_COUNTRY_NAME", "dest").columns
+
+    // result
+    ... dest, ORIGIN_COUNTRY_NAME, count
+
+### Reserved Characters and Keywords
+
+One thing that you might come across is reserved characters like spaces or dashes in column names. Handling these means
+escaping column names appropriately. In Spark, we do this by using backtick (`) characters
+
+    val dfWithLongColName = df.withColumn(
+      "This Long Column-Name",
+    expr("ORIGIN_COUNTRY_NAME"))
+
+Don't need escape because first argument to `withColumn` is a string for new column name. However:
+
+    dfWithLongColName.selectExpr(
+      "`This Long Column-Name`",
+      "`This Long Column-Name` as `new col`")
+    .show(2)
+
+    -- in SQL
+    SELECT `This Long Column-Name`, `This Long Column-Name` as `new col`
+    FROM dfTableLong LIMIT 2
+
+Need backticks because we're referencing a column in an expression
+
+We can refer to columns with reserved characters (and not escape them) if we’re doing an explicit string-to-column
+reference
+
+    dfWithLongColName.select(col("This Long Column-Name")).columns
+    // same
+    dfWithLongColName.select(expr("`This Long Column-Name`")).columns
+
+### Case Sensitivity
+
+Default is case insensitive
+
+    -- in SQL
+    set spark.sql.caseSensitive true
+
+### Remove Columns
+
+We can do this by using `select`. However, there is also a dedicated method called `drop`
+
+    df.drop("ORIGIN_COUNTRY_NAME").show()
+    df.drop("ORIGIN_COUNTRY_NAME", "DEST_COUNTRY_NAME")
+
+### Changing a Column's Type (cast)
+
+    df.withColumn("count2", col("count").cast("long"))
+
+    -- in SQL
+    SELECT *, cast(count as long) AS count2 FROM dfTable
+
+### Filtering Rows
+
+There are two methods to perform this operation: you can use `where` or `filter` and they both will perform the same
+operation and accept the same argument types when used with DataFrames.
+
+    df.filter(col("count") < 2).show(2)
+    df.where("count < 2").show(2)
+
+If you want to specify multiple AND filter, just chain them sequentially (Spark automatically performs all filtering
+operations at the same time)
+
+    df.where(col("count") < 2)
+      .where(col("ORIGIN_COUNTRY_NAME") != "Croatia")
+      .show(2)
+
+### Getting Unique Rows
+
+    df.select("ORIGIN_COUNTRY_NAME", "DEST_COUNTRY_NAME").distinct().row()
+
+### Random Samples
+
+Using `sample` method on a DataFrame to sample random records.
+
+    val seed = 5
+    val withReplacement = false
+    val fraction = 0.5
+    df.sample(withReplacement, fraction, seed).count()
+
+### Random Splits
