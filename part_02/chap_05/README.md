@@ -381,7 +381,7 @@ If you want to specify multiple AND filter, just chain them sequentially (Spark 
 operations at the same time)
 
     df.where(col("count") < 2)
-      .where(col("ORIGIN_COUNTRY_NAME") != "Croatia")
+      .where(col("ORIGIN_COUNTRY_NAME") =!= "Croatia")
       .show(2)
 
 ### Getting Unique Rows
@@ -394,7 +394,124 @@ Using `sample` method on a DataFrame to sample random records.
 
     val seed = 5
     val withReplacement = false
-    val fraction = 0.5
+    val fraction = 0.5  // the aproximate fraction of the dataset that will be returned
     df.sample(withReplacement, fraction, seed).count()
 
 ### Random Splits
+
+Often used with machine learning algorithms to create training, validation, and test sets. We split our DataFrame into
+two different DataFrames by setting the weights by which we will split the DataFrame
+
+    // in Scala
+    val dataFrames = df.randomSplit(Array(0.25, 0.75), seed)
+    dataFrames(0).count() > dataFrames(1).count() // false
+
+    # in Python
+    dataFrames = df.randomSplit([0.25, 0.75], seed)
+    dataFrames[0].count() > dataFrames[1].count() # false
+
+### Concatenating and Appending Rows (Union)
+
+DataFrames are immutable, so to append to a DataFrame, you must _union_ the original DataFrame along with the new
+DataFrame. To union two DataFrames, you must be sure that they have the same schema and number of columns
+
+> Unions are currently performed based on location, not on the schema. This means that columns will not automatically
+> line up the way you think they might.
+
+    // in Scala
+    import org.apache.spark.sql.Row
+    val schema = df.schema // df above
+    val newRows = Seq(
+      Row("New Country", "Other Country", 5L),
+      Row("New Country 2", "Other Country 3", 1L)
+    )
+    val parallelizedRows = spark.sparkContext.parallelize(newRows)
+    val newDF = spark.createDataFrame(parallelizedRows, schema)
+    df.union(newDF)
+      .where("count = 1")
+      .where($"ORIGIN_COUNTRY_NAME" =!= "United States")
+      .show()
+
+> In Scala, you must use the =!= operator so that you don’t just compare the unevaluated column expression to a string
+> but instead to the evaluated one
+
+    # in Python
+    from pyspark.sql import Row
+    schema = df.schema
+    newRows = [
+      Row("New Country", "Other Country", 5L),
+      Row("New Country 2", "Other Country 3", 1L)
+    ]
+    parallelizedRows = spark.sparkContext.parallelize(newRows)
+    newDF = spark.createDataFrame(parallelizedRows, schema)
+
+    df.union(newDF)
+      .where("count = 1")
+      .where(col("ORIGIN_COUNTRY_NAME") != "United States")
+      .show()
+
+### Sorting Rows
+
+There are two equivalent operations: `sort` and `orderBy`. The default is to sort in ascending order:
+
+    df.sort("count")
+    df.orderBy("count", "DEST_COUNTRY_NAME").show()
+    df.orderBy(col("count"), col("DEST_COUNTRY_NAME")).show()
+
+To more explicitly sort direction:
+
+    import org.apache.spark.sql.functions.{desc, asc}
+    df.orderBy(expr("count desc")).show() // decending count
+    df.orderBy(desc("count"), asc("DEST_COUNTRY_NAME")).show()
+
+> An advanced tip is to use asc_nulls_first, desc_nulls_first, asc_nulls_last, or desc_nulls_last to specify where you
+> would like your null values to appear in an ordered DataFrame
+
+For optimization: Sort within each partition before another set of transformation
+
+    spark.read.format("json").load("/data/flight-data/json/*-summary.json")
+      .sortWithinPartitions("count")
+
+### Limit
+
+    df.limit(5)
+
+### Repartition and Coalesce
+
+Another important optimization opportunity is to partition the data according to some frequently filtered columns, which
+control the physical layout of data across the cluster including the partitioning scheme and the number of partitions.
+
+Repartition will incur a full shuffle of the data, regardless of whether one is necessary. You should repartition only
+when the future number of partition is greater than your current number of partitions or when you are looking to
+partition by a set of columns
+
+    // in Scala
+    df.rdd.getNumPartitions // 1
+    df.repartition(5)
+
+    # in Python
+    df.rdd.getNumPartitions()
+    df.repartition(5)
+
+Repartition based on column:
+
+    df.repartition(col("DEST_COUNTRY_NAME"))
+    df.repartition(5, col("DEST_COUNTRY_NAME"))
+
+Coalesce, on the other hand, will not incur a full shuffle and will try to combine partitions
+
+    df.repartition(5, col("DEST_COUNTRY_NAME)).coalesce(2)
+
+### Collecting Rows to the Driver
+
+Spark maintains the state of the cluster in the driver. There are times when you’ll want to collect some of your data to
+the driver in order to manipulate it on your local machine
+
+- `collect` gets all data from the entire DataFrame
+- `take` selects the first N rows
+- `show` prints out a number of rows
+
+      val collectDF = df.limit(10)
+      collectDF.take(5)
+      collectDF.show()
+      collectDF.collect() // collect() is an action, select() is a transformation
