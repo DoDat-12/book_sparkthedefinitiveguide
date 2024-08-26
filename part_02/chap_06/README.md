@@ -156,3 +156,153 @@ Calculate approximate quantiles of data
     val relError = 0.05
     df.stat.approxQuantile("UnitPrice", quantileProbs, relError)
 
+Cross-tabulation
+
+    // in Scala
+    df.stat.crosstab("StockCode", "Quantity").show()
+
+    # in Python
+    df.stat.crosstab("StockCode", "Quantity").show()
+
+Frequent item pairs
+
+    // in Scala
+    df.stat.freqItems(Seq("StockCode", "Quantity")).show()
+
+    # in Python
+    df.stat.freqItems(["StockCode", "Quantity"]).show()
+
+Add unique ID to each row by using `monotonically_increasing_id` function
+
+    // in Scala
+    import org.apache.spark.sql.functions.monotonically_increasing_id
+    df.select(monotonically_increasing_id()).show(2)
+
+    # in Python
+    from pyspark.sql.functions import monotonically_increasing_id
+    df.select(monotonically_increasing_id()).show(2)
+
+## Working with Strings
+
+The `initcap` function: Capitalize every word in a given string when that word is separated from another by a space
+
+    df.select(initcap(col("Description"))).show()
+
+Cast strings in uppercase and lowercase
+
+    df.select(
+        col("Description"),
+        lower(col("Description"),
+        upper(col("Description")
+    ).show()
+
+Adding or removing spaces around a string: `lpad`, `ltrim`, `rpad`, `rtrim`, `trim`
+
+### Regular Expressions
+
+Regular expressions give the user an ability to specify a set of rules to use to either extract values from a string or
+replace them with some other values
+
+Two key functions in Spark: `regexp_extract` and `regexp_replace`
+    
+    // scala
+    import org.apache.spark.sql.functions.regexp_replace
+    val simpleColors = Seq("black", "white", "red", "green", "blue")
+    val regexString = simpleColors.map(_.toUpperCase).mkString("|")
+    df.select(
+        regexp_replace(col("Description"), regexString, "COLOR").alias("color_clean"),
+        col("Description")
+    ).show(2)
+
+    // python
+    from pyspark.sql.functions import regexp_place
+    regex_string = "BLACK|WHITE|RED|GREEN|BLUE"
+    df.select(
+        regexp_replace(col("Description"), regex_string, "COLOR").alias("color_clean")
+        col("Description")
+    ).show(2)
+
+    +--------------------+--------------------+
+    |         color_clean|         Description|
+    +--------------------+--------------------+
+    |COLOR HANGING HEA...|WHITE HANGING HEA...|
+    | COLOR METAL LANTERN| WHITE METAL LANTERN|
+    +--------------------+--------------------+
+    // Replace WHITE with COLOR
+
+Replace given characters with other characters
+
+    df.select(translate(col("Description"), "LEET", "1337"), col("Description")).show(2)
+
+    +----------------------------------+--------------------+
+    |translate(Description, LEET, 1337)|         Description|
+    +----------------------------------+--------------------+
+    |              WHI73 HANGING H3A...|WHITE HANGING HEA...|
+    |               WHI73 M37A1 1AN73RN| WHITE METAL LANTERN|
+    +----------------------------------+--------------------+
+
+Using regexp_extract
+
+    val regexString = simpleColors.map(_.toUpperCase).mkString("(", "|", ")") // python: regexString = "(BLACK|WHITE|RED|GREEN|BLUE)"
+    df.select(
+        regexp_extract(col("Description"), regexString, 1).alias("color_clean"),
+        col("Description")
+    ).show(2)
+
+Check for existence
+
+    col("Description").contains("BLACK")
+
+## Working with Dates and Timestamps
+
+Get the current date and the current timestamp
+
+    .withColumn("today", current_date())
+    .withColumn("now", current_timestamp())
+
+Add and subtract days
+
+    dateDF.select(date_sub(col("today"), 5), date_add(col("today"), 5)).show()
+
+The `datediff` function that returns the number of days in between two dates
+
+    select(datediff(col("week_ago"), col("today"))
+
+The `months_between` gives the number of month between two dates
+
+    select(months_between(col("start"), col("end"))).show()
+
+The `to_date` function converts a string to a date, optionally with a specified format
+
+    spark.range(5).withColumn("date", lit("2017-01-01"))
+        .select(to_date(col("date"))).show(1)
+
+> If cannot parse the date, it returns `null`
+
+    dateDF.select(to_date(lit("2016-20-12")),to_date(lit("2017-12-11"))).show(1)
+
+    +-------------------+-------------------+
+    |to_date(2016-20-12)|to_date(2017-12-11)|
+    +-------------------+-------------------+
+    |               null|         2017-12-11|
+    +-------------------+-------------------+
+
+Date format according to: https://docs.oracle.com/javase/8/docs/api/java/text/SimpleDateFormat.html
+
+    val dateFormat = "yyyy-dd-MM"
+    spark.range(1).select(
+        to_date(lit("2017-12-11"), dateFormat).alias("date"),
+        to_date(lit("2017-20-12"), dateFormat).alias("date2")
+    ).show()
+
+`to_timestamp` always requires a format to be specified
+
+    select(to_timestamp(col("date"), dateFormat))
+
+    +----------------------------------+
+    |to_timestamp(`date`, 'yyyy-dd-MM')|
+    +----------------------------------+
+    |               2017-11-12 00:00:00|
+    +----------------------------------+
+
+## Working with Nulls in Data
