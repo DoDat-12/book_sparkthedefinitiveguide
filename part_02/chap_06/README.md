@@ -204,7 +204,7 @@ Regular expressions give the user an ability to specify a set of rules to use to
 replace them with some other values
 
 Two key functions in Spark: `regexp_extract` and `regexp_replace`
-    
+
     // scala
     import org.apache.spark.sql.functions.regexp_replace
     val simpleColors = Seq("black", "white", "red", "green", "blue")
@@ -306,3 +306,317 @@ Date format according to: https://docs.oracle.com/javase/8/docs/api/java/text/Si
     +----------------------------------+
 
 ## Working with Nulls in Data
+
+There are two things you can do with null values: drop nulls or fill them with a value (globally or on a per-column
+basis)
+
+### Coalesce
+
+Spark includes a function to allow you to select the first non-null value from a set of columns by using the `coalesce`
+function
+
+    df.select(coalesce(col("Description"), col("CustomerId"))).show()
+
+### ifnull, nullif, nvl, and nvl2
+
+- `ifnull` - select the second value if thr first is null, and defaults to the first
+- `nullif` - returns null if the two values are equal or else returns the second if they are not
+- `nvl` - returns the second value if the first is null, defaults to the first
+- `nvl2` - returns the second value if the first is not null; otherwise, return the last specified value (example)
+
+        SELECT
+            ifnull(null, 'return_value') // return_value
+            nullif('value', 'value') // null
+            nvl(null, 'return_value') // return_value
+            nvl2('not_null', 'return_value', 'else_value')
+        FROM dfTable LIMIT 1;
+
+### drop
+
+Removes rows that contain nulls. The default is to drop any row in which any value is null
+
+    df.na.drop()
+    df.na.drop("any")
+
+Using "all" drops the row only if all values are `null` or `NaN` for that row
+
+    df.na.drop("all")
+
+We can also apply this to certain sets of columns by passing in an array of columns
+
+    // in Scala
+    df.na.drop("all", Seq("StockCode", "InvoiceNo"))
+
+    # in Python
+    df.na.drop("all", subset=["StockCode", "InvoiceNo"])
+
+### fill
+
+Fill all `null` values in columns of type String
+
+    df.na.fill("All Null values become this string")
+
+We could do the same for columns of different type
+
+    df.na.fill(5:Integer)
+    df.na.fill(5:Double)
+
+To specify columns
+
+    // in Scala
+    df.na.fill(5, Seq("StockCode", "InvoiceNo"))
+
+    # in Python
+    df.na.fill("all", subset=["StockCode", "InvoiceNo"])
+
+We can also do this with a Scala `Map`, where the key is the column name and the value is the value we would like to use
+to fill null values
+
+    // in Scala
+    val fillColValues = Map("StockCode" -> 5, "Description" -> "No Value")
+    df.na.fill(fillColValues)
+
+    # in Python
+    fill_col_vals = {"StockCode": 5, "Description" : "No Value")
+    df.na.fill(fill_col_vals)
+
+### replace
+
+Replace all values in a certain column according to their current value. The only requirement is that this value be the
+same type as the original values
+
+    // in Scala
+    df.na.replace("Description", Map("" -> "UNKNOWN"))
+    
+    # in Python
+    df.na.replace([""], ["UNKNOWN"], "Description")
+
+## Ordering
+
+You can use `asc_nulls_first`, `desc_nulls_first`, `asc_nulls_last`, `desc_nulls_last`
+
+## Working with Complex Types
+
+### Structs
+
+Create struct by wrapping a set of columns in parentheses in a query
+
+    df.selectExpr("(Description, InvoiceNo) as complex", "*")
+    df.selectExpr("struct(Description, InvoiceNo) as complex", "*")
+
+    val complexDF = df.select(struct("Description", "InvoiceNo").alias("complex")
+    // DataFrame with a column `complex`
+
+Use dot syntax to query, or the column method `getField`
+
+    complexDF.select("complex.Description")
+    complexDF.select(col("complex").getField("Description"))
+
+Query all
+
+    comlexDF.select("complex.*")
+
+### Arrays
+
+Objective: Take every single word in our `Description` column and convert that into a row in our DataFrame. The first
+task is to turn our `Description` column into a complex type, an array
+
+### split
+
+Using the `split` function and specify the delimiter
+
+    df.select(split(col("Description"), " ")).show(2)
+
+    +---------------------+
+    | split(Description, )|
+    +---------------------+
+    | [WHITE, HANGING, ...|
+    | [WHITE, METAL, LA...|
+    +---------------------+
+
+Spark allows us to manipulate this complex type as another column
+
+    df.select(split(col("Description"), " ").alias("array_col")
+      .selectExpr("array_col[0]").show(2)
+
+    +------------+
+    |array_col[0]|
+    +------------+
+    |       WHITE|
+    |       WHITE|
+    +------------+
+
+### Array Length
+
+    df.select(size(split(col("Description"), " "))).show(2)
+
+### array_contains
+
+See whether this array contains a value
+
+    df.select(array_contains(split(col("Description"), " "), "WHITE")).show(2) // true or false each row
+
+### explode
+
+The `explode` function takes a column that consists of arrays and creates one row (with the rest of the values
+duplicated) per value in the array
+
+    df.withColumn("splitted", split(col("Description"), " "))
+      .withColumn("exploded", explode(col("splitted")))
+      .select("Description", "InvoiceNo", "explode").show(2)
+
+    +--------------------+---------+--------+
+    |         Description|InvoiceNo|exploded|
+    +--------------------+---------+--------+
+    |WHITE HANGING HEA...|   536365|   WHITE|
+    |WHITE HANGING HEA...|   536365| HANGING|
+    +--------------------+---------+--------+
+
+### Maps
+
+Maps are created by using the `map` function and key-value pairs of columns
+
+    df.select(map(col("Description"), col("InvoiceNo")).alias("complex_map")).show(2)
+
+    +--------------------+
+    |         complex_map|
+    +--------------------+
+    |Map(WHITE HANGING...|
+    |Map(WHITE METAL L...|
+    +--------------------+
+
+You can query them by using the proper key. A missing key returns `null`
+
+    df.select(map(col("Description"), col("InvoiceNo")).alias("complex_map"))
+      .selectExpr("complex_map['WHITE METAL LANTERN']").show(2)
+
+    +--------------------------------+
+    |complex_map[WHITE METAL LANTERN]|
+    +--------------------------------+
+    |                            null|
+    |                          536365|
+    +--------------------------------+
+
+Explode `map` types will return them into columns
+
+    df.select(map(col("Description"), col("InvoiceNo")).alias("complex_map"))
+      .selectExpr("explode(complex_map)").show(2)
+
+    +--------------------+------+
+    |                 key| value|
+    +--------------------+------+
+    |WHITE HANGING HEA...|536365|
+    | WHITE METAL LANTERN|536365|
+    +--------------------+------+
+
+## Working with JSON
+
+You can operate directly on strings of JSON in Spark and parse from JSON or extract JSON objects
+
+    val jsonDF = spark.range(1).selectExpr(
+      """
+      '{"myJSONKey" : {"myJSONValue" : [1, 2, 3]}}' as jsonString
+      """
+    }
+
+The `get_json_object` to inline query a JSON object, be it a dictionary or array. You can use `json_tuple` if this
+object has only one level of nesting
+
+    import org.apache.spark.sql.functions.{get_json_object, json_tuple}
+    jsonDF.select(
+      get_json_object(col("jsonString"), "$.myJSONKey.myJSONValue[1]") as "column",
+      json_tuple(col("jsonString"), "myJSONKey")
+    ).show(2)
+
+![get json object.png](get%20json%20object.png)
+
+Turn a StructType into a JSON string by using the `to_json` function
+
+    import org.apache.spark.sql.functions.to_json
+    df.selectExpr("(InvoiceNo, Description) as myStruct")
+      .select(to_json(col("myStruct")))
+
+This function also accepts a dictionary (map) of parameters that are the same as the JSON data source. You can use the
+`from_json` function to parse this (or other JSON data) back in. This naturally requires you to specify a schema, and
+optionally you can specify a map of options
+
+    // in Scala
+    import org.apache.spark.sql.functions.from_json
+    import org.apache.spark.sql.types._
+    val parseSchema = new StructType(Array(
+      new StructField("InvoiceNo",StringType,true),
+      new StructField("Description",StringType,true)))
+    df.selectExpr("(InvoiceNo, Description) as myStruct")
+      .select(to_json(col("myStruct")).alias("newJSON"))
+      .select(from_json(col("newJSON"), parseSchema), col("newJSON")).show(2)
+
+
+    # in Python
+    from pyspark.sql.functions import from_json
+    from pyspark.sql.types import *
+    parseSchema = StructType((
+      StructField("InvoiceNo",StringType(),True),
+      StructField("Description",StringType(),True)))
+    df.selectExpr("(InvoiceNo, Description) as myStruct")\
+      .select(to_json(col("myStruct")).alias("newJSON"))\
+      .select(from_json(col("newJSON"), parseSchema), col("newJSON")).show(2)
+
+## User-Defined Functions (UDFs)
+
+These user-defined functions (UDFs) make it possible for you to write your own custom transformations using Python or
+Scala and even use external libraries
+
+Example
+
+    val udfExampleDF = spark.range(5).toDF("num")
+    def power3(number:Double):Double = number * number * number
+    power3(2.0)
+
+Now that we’ve created these functions and tested them, we need to register them with Spark so that we can use them on
+all of our worker machines. Spark will serialize the function on the driver and transfer it over the network to all
+executor processes. This happens regardless of language.
+
+If the function is written in Scala or Java, you can use it within the Java Virtual Machine (JVM). This means that there
+will be little performance penalty aside from the fact that you can’t take advantage of code generation capabilities
+that Spark has for built-in functions
+
+If the function is written in Python, something quite different happens. Spark starts a Python process on the worker,
+serializes all the data to a format that Python can understand (remember, it was in the JVM earlier), executes the
+function row by row on that data in the Python process, and then finally returns the results of the row operations to
+the JVM and Spark
+
+![udf.png](udf.png)
+
+> Starting this Python process is expensive, but the real cost is in serializing the data to Python. Recommended write
+> your UDFs in Scala or Java
+
+First, register the function to make it available as a DataFrame function
+
+    import org.apache.spark.sql.functions.udf
+    val power3udf = udf(power3(_:Double):Double)
+
+With Python
+
+    def power3(double_value):
+      return double_value ** 3
+
+    from pyspark.sql.functions import udf
+    power3udf = udf(power3)
+
+We can use that just like any other DataFrame function
+
+    udfExampleDF.select(power3udf(col("num"))).show(truncate=false)
+
+We can also register this UDF as a Spark SQL function (for using string expression)
+
+    spark.udf.register("power3", power3(_:Double):Double)
+    udfExampleDF.selectExpr("power3(num)").show(2)
+
+One thing we can also do to ensure that our functions are working correctly is specifying a return type (best practice
+for Python)
+
+    from pyspark.sql.types import IntegerType, DoubleType
+    spark.udf.register("power3py", power3, DoubleType())
+
+If you specify the type that doesn’t align with the actual type returned by the function, Spark will not throw an error
+but will just return null to designate a failure
