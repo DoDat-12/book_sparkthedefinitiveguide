@@ -140,3 +140,4 @@ you specify them inline
     # in Python
     df.groupBy("InvoiceNo").agg(expr("avg(Quantity)"), expr("stddev_pop(Quantity)")).show()
 
+## Window Functions
