@@ -141,3 +141,132 @@ you specify them inline
     df.groupBy("InvoiceNo").agg(expr("avg(Quantity)"), expr("stddev_pop(Quantity)")).show()
 
 ## Window Functions
+
+You can also use _window functions_ to carry out some unique aggregations by either computing some aggregation on a
+specific "window" of data, which you define by using a reference to the current data
+
+A group-by takes data, and every row can go only into one grouping. A window function calculates a return value for
+every input row of a table based on a group of rows, called a frame. Each row can fall into one or more frames
+
+First step: Create a window specification. The `partitionBy` is unrelated to the partitioning scheme concept we've
+covered thus far. It's just a similar concept that describes how we will be breaking up our group. The ordering
+determines the ordering within a given partition, and, finally, the frame specification (the rowsBetween statement)
+states which rows will be included in the frame based on its reference to the current input row. In the following
+example, we look at all previous rows up to the current row
+
+    // step 1 - create window specification
+    val windowSpec = Window
+      .partitionBy("CustomerId", "date")
+      .orderBy(col("Quantity").desc)  // rank will rank this
+      .rowsBetween(Window.unboundedPreceding, Window.currentRow)
+
+    // step 2 - create aggregations
+    val maxPurchaseQuantity = max(col("Quantity")).over(windowSpec)  // a column (or expressions)
+    val purchaseDenseRank = dense_rank().over(windowSpec)  // use dense_rank as opposed to rank to avoid gaps in the ranking
+    val purchaseRank = rank().over(windowSpec)    
+
+Perform a `select`
+
+    dfWithDate.where("CustomerId IS NOT NULL").orderBy("CustomerId")
+      .select(
+        col("CustomerId"),
+        col("date"),
+        col("Quantity"),
+        purchaseRank.alias("quantityRank"),
+        purchaseDenseRank.alias("quantityDenseRank"),
+        maxPurchaseQuantity.alias("maxPurchaseQuantity")
+      ).show(truncate=false)
+
+## Grouping Sets
+
+Sometimes we want something a bit more complete—an aggregation across multiple groups. We achieve this by using grouping
+sets. Grouping sets are a low-level tool for combining sets of aggregations together. They give you the ability to
+create arbitrary aggregation in their group-by statements.
+
+> Grouping sets depend on null values for aggregation levels. If you do not filter-out null values, you will get
+> incorrect results. This applies to cubes, rollups, and grouping sets.
+
+    SELECT CustomerId, stockCode, sum(Quantity) FROM dfNoNull
+    GROUP BY customerId, stockCode GROUPING SETS((customerId, stockCode),())
+    ORDER BY CustomerId DESC, stockCode DESC
+
+> The GROUPING SETS operator is only available in SQL. To perform the same in DataFrames, you use the rollup and cube
+> operators—which allow us to get the same results
+
+### Rollups
+
+When we set our grouping keys of multiple columns, Spark looks at those as well as the actual combinations that are
+visible in the dataset. A rollup is a multidimensional aggregation that performs a variety of group-by style
+calculations for us.
+
+    // rollup - treating element hierarchically date is country's dad
+    val rolledUpDF = dfNoNull.rollup("date", "Country").agg(sum("Quantity"))
+      .selectExpr("date", "Country", "`sum(Quantity)` as total_quantity")
+      .orderBy(asc_nulls_first("Date"))
+    rolledUpDF.show(truncate=false)
+    // 1 row full null is total over all
+    // row with country null is total on that day
+
+## Cube
+
+A cube takes the rollup to a level deeper. Rather than treating elements hierarchically, a cube does the same thing
+across all dimensions.
+
+- The total across all dates and countries
+- The total for each date across all countries
+- The total for each country on each date
+- The total for each country across all dates
+
+      // cube - same thing but all dimensions
+      val cubeDF = dfNoNull.cube("Date", "Country").agg(sum(col("Quantity")))
+      .select("date", "Country", "sum(Quantity)")
+      .orderBy(asc_nulls_first("Date"))
+      cubeDF.show(truncate=false)
+
+### Grouping Metadata
+
+Sometimes when using cubes and rollups, you want to be able to query the aggregation levels so that you can easily
+filter them down accordingly. We can do this by using the `grouping_id`, which gives us a column specifying the level of
+aggregation that we have in our result set
+
+Grouping ID:
+
+- 3: This will appear for the highest-level aggregation, which will gives us the total quantity regardless of customerId
+  and stockCode.
+- 2: This will appear for all aggregations of individual stock codes. This gives us the total quantity per stock code,
+  regardless of customer.
+- 1: This will give us the total quantity on a per-customer basis, regardless of item purchased
+- 0: This will give us the total quantity for individual customerId and stockCode combinations
+
+Example
+
+    // in Scala
+    import org.apache.spark.sql.functions.{grouping_id, sum, expr}
+    dfNoNull.cube("customerId", "stockCode").agg(grouping_id(), sum("Quantity"))
+    .orderBy(expr("grouping_id()").desc)
+    .show()
+    +----------+---------+-------------+-------------+
+    |customerId|stockCode|grouping_id()|sum(Quantity)|
+    +----------+---------+-------------+-------------+
+    |      null|     null|            3|      5176450|
+    |      null|    23217|            2|         1309|
+    |      null|   90059E|            2|           19|
+    ...
+    +----------+---------+-------------+-------------+
+
+### Pivot
+
+Pivots make it possible for you to convert a row into a column. For example, in our current data we have a Country
+column. With a pivot, we can aggregate according to some function for each of those given countries and display them in
+an easy-to-query way
+
+    // pivot
+    val pivoted = dfWithDate.groupBy("date").pivot("Country").sum()
+    pivoted.where("date > '2011-12-05'").select("date", "`USA_sum(Quantity)`").show()
+
+This DataFrame will now have a column for every combination of country, numeric variable, and a column specifying the
+date. For example, for the USA we have the following columns: USA_sum(Quantity), USA_sum(UnitPrice), USA_sum(CustomerID)
+
+## User-Defined Aggregation Functions
+
+I ain't that good

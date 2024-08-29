@@ -1,7 +1,8 @@
 package spark.chap07
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.functions.{approx_count_distinct, avg, col, collect_list, collect_set, corr, count, countDistinct, covar_pop, covar_samp, expr, first, kurtosis, last, max, min, skewness, stddev_pop, stddev_samp, sum, sum_distinct, var_pop, var_samp}
+import org.apache.spark.sql.expressions.Window
+import org.apache.spark.sql.functions.{approx_count_distinct, asc_nulls_first, avg, col, collect_list, collect_set, corr, count, countDistinct, covar_pop, covar_samp, dense_rank, expr, first, grouping_id, kurtosis, last, max, min, rank, skewness, stddev_pop, stddev_samp, sum, sum_distinct, to_date, var_pop, var_samp}
 
 object Main {
   def main(args: Array[String]): Unit = {
@@ -90,5 +91,58 @@ object Main {
     // grouping with maps
     df.groupBy("InvoiceNo").agg("Quantity"->"avg", "Quantity"->"stddev_pop").show()
 
+    // window functions
+    // add a date column from invoice date
+    val dfWithDate = df.withColumn("date", to_date(col("InvoiceDate"), "M/d/yyyy H:m"))
+    dfWithDate.createOrReplaceTempView("dfWithDate")
+
+    // step 1 - create window specification
+    val windowSpec = Window
+      .partitionBy("CustomerId", "date")
+      .orderBy(col("Quantity").desc)
+      .rowsBetween(Window.unboundedPreceding, Window.currentRow)
+
+    // step 2 - aggregation
+    val maxPurchaseQuantity = max(col("Quantity")).over(windowSpec)
+    val purchaseDenseRank = dense_rank().over(windowSpec)
+    val purchaseRank = rank().over(windowSpec)
+
+    // step 3 - select
+    dfWithDate.where("CustomerId IS NOT NULL").orderBy("CustomerId")
+      .select(
+        col("CustomerId"),
+        col("date"),
+        col("Quantity"),
+        purchaseRank.alias("quantityRank"),
+        purchaseDenseRank.alias("quantityDenseRank"),
+        maxPurchaseQuantity.alias("maxPurchaseQuantity")
+      ).show(truncate=false)
+
+    // Grouping sets
+    val dfNoNull = dfWithDate.drop()
+    dfNoNull.createOrReplaceTempView("dfNoNull")
+
+    // rollup - treating element hierarchically date is country's dad
+    val rolledUpDF = dfNoNull.rollup("date", "Country").agg(sum("Quantity"))
+      .selectExpr("date", "Country", "`sum(Quantity)` as total_quantity")
+      .orderBy(asc_nulls_first("Date"))
+    rolledUpDF.show(truncate=false)
+    // 1 row full null is total over all
+    // row with country null is total on that day
+
+    // cube - same thing but all dimensions
+    val cubeDF = dfNoNull.cube("Date", "Country").agg(sum(col("Quantity")))
+      .select("date", "Country", "sum(Quantity)")
+      .orderBy(asc_nulls_first("Date"))
+    cubeDF.show(truncate=false)
+
+    // Grouping Metadata
+    dfNoNull.cube("CustomerId", "stockCode").agg(grouping_id(), sum("Quantity"))
+      .orderBy(expr("grouping_id()").desc)
+      .show(truncate=false)
+
+    // pivot
+    val pivoted = dfWithDate.groupBy("date").pivot("Country").sum()
+    pivoted.where("date > '2011-12-05'").select("date", "`USA_sum(Quantity)`").show()
   }
 }
