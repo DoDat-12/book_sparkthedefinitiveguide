@@ -10,4 +10,4 @@
 - Chap 5. Basic Structured Operations
 - Chap 6. Working with Different Types of Data
 - Chap 7. Aggregations
-
+- Chap 8. Joins
