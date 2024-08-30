@@ -11,3 +11,4 @@
 - Chap 6. Working with Different Types of Data
 - Chap 7. Aggregations
 - Chap 8. Joins
+- Chap 9. Data Sources
