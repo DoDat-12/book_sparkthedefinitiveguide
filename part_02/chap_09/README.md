@@ -116,3 +116,25 @@ number of files
 
 ## JSON Files
 
+In Spark, when we refer to JSON files, we refer to _line-delimited_ JSON files
+
+JSON data source options: https://spark.apache.org/docs/latest/sql-data-sources-json.html
+
+Line-delimited JSON is actually a much more stable format because it allows you to append to a file with a new record (
+rather than having to read in an entire file and then write it out), which is what we recommend that you use
+
+    spark.read.format("json")
+
+### Reading JSON Files
+
+    spark.read.format("json")
+      .option("mode", "FAILFAST")
+      .schema(myManualSchema)
+      .load("D:\\repo_books\\book_sparkthedefinitiveguide\\data\\flight-data\\json\\2010-summary.json")
+      .show(5)
+
+### Writing JSON Files
+
+Writing JSON files is just as simple as reading them, and, as you might expect, the data source does not matter.
+Therefore, we can reuse the CSV DataFrame that we created earlier to be the source for our JSON file
+
