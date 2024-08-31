@@ -40,5 +40,31 @@ object Main {
     csvDF.write.format("json")
       .mode("overwrite")
       .save("D:\\repo_books\\spark_chap09\\output\\my-json-files")
+
+    // parquet reader
+    spark.read.format("parquet")
+      .load("D:\\repo_books\\book_sparkthedefinitiveguide\\data\\flight-data\\parquet\\2010-summary.parquet")
+      .show(5, truncate = false)
+
+    // parquet writer
+    csvDF.write.format("parquet").mode("overwrite")
+      .save("output/my-parquet-files")
+
+    // orc reader
+    spark.read.format("orc")
+      .load("D:\\repo_books\\book_sparkthedefinitiveguide\\data\\flight-data\\orc\\2010-summary.orc")
+      .show(5)
+
+    // orc writer
+    csvDF.write.format("orc").mode("overwrite")
+      .save("output/my-orc-files")
+
+    // sqlite reader
+    val dbDataFrame = spark.read.format("jdbc")
+      .option("url", "jdbc:sqlite:D:\\repo_books\\spark_chap09\\sql-input\\my-sqlite.db")
+      .option("dbtable", "flight_info")
+      .option("driver", "org.sqlite.JDBC")
+      .load()
+    dbDataFrame.show(5, truncate = false)
   }
 }

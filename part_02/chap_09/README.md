@@ -138,3 +138,72 @@ rather than having to read in an entire file and then write it out), which is wh
 Writing JSON files is just as simple as reading them, and, as you might expect, the data source does not matter.
 Therefore, we can reuse the CSV DataFrame that we created earlier to be the source for our JSON file
 
+    // json writer
+    csvDF.write.format("json")
+      .mode("overwrite")
+      .save("D:\\repo_books\\spark_chap09\\output\\my-json-files")
+
+## Parquet Files (Apache Spark default format)
+
+Parquet is an open source column-oriented data store that provides a variety of storage optimizations, especially for
+analytics workload.It provides columnar compression, which saves storage space and allows for reading individual columns
+instead of entire files. Another advantage of Parquet is that it supports complex types. This means that if your column
+is an array (which would fail with a CSV file, for example), map, or struct, you’ll still be able to read and write that
+file without issue
+
+    spark.read.format("parquet")
+
+### Reading Parquet Files
+
+Parquet has very few options because it enforces its own schema when storing data. Thus, all you need to set is the
+format, and you are good to go
+
+![parquet source options.png](parquet%20source%20options.png)
+
+### Writing Parquet Files
+
+    // parquet writer
+    csvDF.write.format("parquet").mode("overwrite")
+      .save("D:\\repo_books\\spark_chap09\\output\\my-parquet-files")
+
+![parquet write auto.png](parquet%20write%20auto.png)
+
+## ORC Files
+
+ORC is a self-describing, type-aware columnar file format designed for Hadoop workloads. It is optimized for large
+streaming reads, but with integrated support for finding required rows quickly. ORC actually has no options for reading
+in data because Spark understands the file format quite well.
+
+> The fundamental difference is that Parquet is further optimized for use with Spark, whereas ORC is further optimized
+> for Hive
+
+### Reading Orc Files
+
+    // orc reader
+    spark.read.format("orc")
+      .load("D:\\repo_books\\book_sparkthedefinitiveguide\\data\\flight-data\\orc\\2010-summary.orc")
+      .show(5)
+
+### Writing Orc Files
+
+    // orc writer
+    csvDF.write.format("orc").mode("overwrite")
+      .save("output/my-orc-files")
+
+## SQL Databases
+
+SQL data sources are one of the more powerful connectors because there are a variety of systems to which you can
+connect (as long as that system speaks SQL)
+
+SQLite
+
+    // sqlite reader
+    val dbDataFrame = spark.read.format("jdbc")
+      .option("url", "jdbc:sqlite:D:\\repo_books\\spark_chap09\\sql-input\\my-sqlite.db")
+      .option("dbtable", "flight_info")
+      .option("driver", "org.sqlite.JDBC")
+      .load()
+    dbDataFrame.show(5, truncate = false)
+
+> quit sqlite cmd: `.quit` + `ENTER`
+
