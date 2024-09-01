@@ -12,3 +12,4 @@
 - Chap 7. Aggregations
 - Chap 8. Joins
 - Chap 9. Data Sources
+- Chap 10. Spark SQL
