@@ -1,10 +1,10 @@
-# Part 1. Gentle Overview of Big Data and Spark
+# Part I. Gentle Overview of Big Data and Spark
 
 - Chap 1. What Is Apache Spark?
 - Chap 2. A Gentle Introduction to Spark
 - Chap 3. A Tool of Spark's Toolset
 
-# Part 2. Structured APIs - DataFrames, SQL, and Datasets
+# Part II. Structured APIs - DataFrames, SQL, and Datasets
 
 - Chap 4. Structured API Overview
 - Chap 5. Basic Structured Operations
@@ -13,3 +13,7 @@
 - Chap 8. Joins
 - Chap 9. Data Sources
 - Chap 10. Spark SQL
+- Chap 11. Datasets
+
+# Part III. Low-Level APIs
+
