@@ -205,3 +205,191 @@ random seed
     }
 
 ## Actions
+
+### reduce
+
+You can use the `reduce` method to specify a function to "reduce" an RDD of any kind of value to one value.
+
+    // in scala
+    spark.sparkContext.parallelize(1 to 20).reduce(_ + _)
+
+    println(s"Longest word: ${words.reduce(wordLengthReducer)}")
+    private def wordLengthReducer(leftWord:String, rightWord:String): String = {
+        if (leftWord.length > rightWord.length)
+          leftWord
+        else
+          rightWord
+    }
+
+This reducer is a good example because you can get one of two outputs ("definitive" or "processing) because the
+`reducer` operation on the partitions is not deterministic.
+
+### count
+
+    words.count()
+
+#### countApprox
+
+This is an approximation of the `count` method we just looked at, but it must execute within a timeout
+
+The confidence is the probability that the error bounds of the result will contain the true value. That is, if
+countApprox were called repeatedly with confidence 0.9, we would expect 90% of the results to contain the true count.
+
+    println(s"Count Approximation: ${words.countApprox(timeout = 400, confidence = 0.95)}")
+
+#### countApproxDistinct
+
+There are two implementation:
+
+- First implementation: The argument passed into the function is the relative accuracy
+- Second implementation: Two arguments are `p` and `sp` where `p` is precision and `sp` is sparse precision
+
+            println(s"countApproxDistinct first implementation: ${words.countApproxDistinct(relativeSD = 0.05)}")
+            println(s"countApproxDistinct second implementation: ${words.countApproxDistinct(p = 4, sp = 10)}")
+
+#### countByValue
+
+You should use this method only if the resulting map is expected to be small because the entire
+thing is loaded into the driver’s memory
+
+    words.countByValue()
+
+#### countByValueApprox
+
+    println(s"countByValueApprox: ${words.countByValueApprox(timeout = 400, confidence = 0.95)}")
+
+### first
+
+Return the first value in the dataset
+
+    words.first()
+
+### max and min
+
+Return the maximum values and minimum values
+
+    spark.sparkContext.parallelize(1 to 20).max()
+    spark.sparkContext.parallelize(1 to 20).min()
+
+### take
+
+`take` and its derivative methods take a number of values from your RDD. This works by first scanning one partition and
+then using the results from that partition to estimate the number of additional partitions needed to satisfy the limit.
+
+    words.take(5)
+    words.takeOrdered(5)
+    words.top(5)
+    val withReplacement = true
+    val numberToTake = 6
+    val randomSeed = 100L
+    words.takeSample(withReplacement, numberToTake, randomSeed)
+
+## Saving Files
+
+Saving files means writing to plain-text files. With RDDs, you cannot actually "save" to a data source in the
+conventional sense. You must iterate over the partitions in order to save the contents of each partition to some
+external database. This is a low-level approach that reveals the underlying operation that is being performed in the
+higher-level APIs.
+
+### saveAsTextFile
+
+    // saveAsTextFile
+    words.saveAsTextFile("output/words_text_file")
+    // with codec
+    words.saveAsTextFile("output/words_compressed", classOf[BZip2Codec])
+
+### SequenceFiles
+
+A `sequenceFile` is a flat file consisting of binary key-value pairs. It is extensively used in MapReduce as
+input/output formats
+
+    words.saveAsObjectFile("path")
+
+### Hadoop Files
+
+There are a variety of different Hadoop file formats to which you can save. These allow you to specify classes, output
+formats, Hadoop configurations, and compression schemes. (For information on these formats, read Hadoop: The Definitive
+Guide [O’Reilly, 2015].)
+
+## Caching
+
+By default, cache and persist only handle data in memory
+
+    words.cache()
+
+We can specify a storage level as any of the storage levels in the singleton object:
+org.apache.spark.storage.StorageLevel, which are combinations of memory only; disk only; and separately, off heap.
+
+     // in Scala
+    words.getStorageLevel
+    # in Python
+    words.getStorageLevel()
+
+## Checkpointing
+
+One feature not available in the DataFrame API is the concept of _checkpointing_. Checkpointing is the act of saving an
+RDD to disk so that future references to this RDD point to those intermediate partitions on disk rather than recomputing
+the RDD from its original source.
+
+    spark.sparkContext.setCheckpointDir("/some/path/for/checkpointing")
+    words.checkpoint()
+
+Now, when we reference this RDD, it will derive from the checkpoint instead of the source data. This can be a helpful
+optimization
+
+## Pipe RDDs to System Commands
+
+With pipe, you can return an RDD created by piping elements to a forked external process
+
+    words.pipe("find /c /v \"\"").collect().foreach(println) // windows
+    words.pipe("wc -l").collect() // linux
+
+### mapPartitions
+
+The previous command revealed that Spark operates on a per-partition basis when it comes to actually executing code.
+`map` is a row-wise alias for `mapPartitions`, which makes it possible for you to map an individual partition
+
+    // mapPartitions
+    words.mapPartitions(_ => Iterator[Int](1)).sum() // create value "1" for every partition in our data
+
+Other functions similar to `mapPartitions` include `mapPartitionsWithIndex`
+
+    // in Scala
+    def indexedFunc(partitionIndex:Int, withinPartIterator: Iterator[String]) = {
+        withinPartIterator.toList.map(
+        value => s"Partition: $partitionIndex => $value").iterator
+    }
+    words.mapPartitionsWithIndex(indexedFunc).collect()
+
+    # in Python
+    def indexedFunc(partitionIndex, withinPartIterator):
+        return ["partition: {} => {}".format(partitionIndex,
+        x) for x in withinPartIterator]
+    words.mapPartitionsWithIndex(indexedFunc).collect()
+
+### foreachPartition
+
+`foreachPartition` simply iterates over all the partitions of the data, no return value. You can create our own text
+file source if you want by specifying outputs to the temp directory with a random ID:
+
+    words.foreachPartition { iter =>
+        import java.io._
+        import scala.util.Random
+        val randomFileName = new Random().nextInt()
+        val pw = new PrintWriter(new File(s"/tmp/random-file-${randomFileName}.txt"))
+        while (iter.hasNext) {
+            pw.write(iter.next())
+        }
+        pw.close()
+    }
+
+### glom
+
+Take every partition in your dataset and converts them to arrays. This can be useful if you're going to collect the data
+to the driver and want to have an array for each partition. Large partitions or large number of partitions will crash
+the driver
+
+    println(spark.sparkContext.parallelize(Seq("Hello", "World"), 2).glom().collect()
+      .map(_.mkString("[", ", ", "]"))
+      .mkString("[", ", ", "]"))
+
