@@ -17,3 +17,6 @@
 
 # Part III. Low-Level APIs
 
+- Chap 12: Resilient Distributed Datasets (RDDs)
+- Chap 13: Advanced RDDs
+
